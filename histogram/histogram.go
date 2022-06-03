@@ -5,20 +5,19 @@ import (
 	"time"
 
 	metrics "github.com/devopsfaith/krakend-metrics/v2"
-	"github.com/influxdata/influxdb/client/v2"
+	"github.com/influxdata/influxdb-client-go/v2"
+	"github.com/influxdata/influxdb-client-go/v2/api"
 	"github.com/luraproject/lura/v2/logging"
 )
 
-func Points(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger) []*client.Point {
-	points := latencyPoints(hostname, now, histograms, logger)
-	points = append(points, routerPoints(hostname, now, histograms, logger)...)
-	if p := debugPoint(hostname, now, histograms, logger); p != nil {
-		points = append(points, p)
-	}
-	if p := runtimePoint(hostname, now, histograms, logger); p != nil {
-		points = append(points, p)
-	}
-	return points
+func Points(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger, writeApi *api.WriteAPI) {
+	latencyPoints(hostname, now, histograms, logger, writeApi)
+	routerPoints(hostname, now, histograms, logger, writeApi)
+
+	// empty data check in functions
+	debugPoint(hostname, now, histograms, logger, writeApi)
+	runtimePoint(hostname, now, histograms, logger, writeApi)
+
 }
 
 var (
@@ -29,8 +28,7 @@ var (
 	routerRegexp  = regexp.MustCompile(routerPattern)
 )
 
-func latencyPoints(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger) []*client.Point {
-	res := []*client.Point{}
+func latencyPoints(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger, writeApi *api.WriteAPI) {
 	for k, histogram := range histograms {
 		if !latencyRegexp.MatchString(k) {
 			continue
@@ -49,18 +47,12 @@ func latencyPoints(hostname string, now time.Time, histograms map[string]metrics
 			"error":    params[3],
 		}
 
-		histogramPoint, err := client.NewPoint("requests", tags, newFields(histogram), now)
-		if err != nil {
-			logger.Error("creating histogram point:", err.Error())
-			continue
-		}
-		res = append(res, histogramPoint)
+		histogramPoint := influxdb2.NewPoint("requests", tags, newFields(histogram), now)
+		(*writeApi).WritePoint(histogramPoint)
 	}
-	return res
 }
 
-func routerPoints(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger) []*client.Point {
-	res := []*client.Point{}
+func routerPoints(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger, writeApi *api.WriteAPI) {
 	for k, histogram := range histograms {
 		if !routerRegexp.MatchString(k) {
 			continue
@@ -76,48 +68,35 @@ func routerPoints(hostname string, now time.Time, histograms map[string]metrics.
 			"name": params[0],
 		}
 
-		histogramPoint, err := client.NewPoint("router.response-"+params[1], tags, newFields(histogram), now)
-		if err != nil {
-			logger.Error("creating histogram point:", err.Error())
-			continue
-		}
-		res = append(res, histogramPoint)
+		histogramPoint := influxdb2.NewPoint("router.response-"+params[1], tags, newFields(histogram), now)
+		(*writeApi).WritePoint(histogramPoint)
 	}
-	return res
 }
 
-func debugPoint(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger) *client.Point {
+func debugPoint(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger, writeApi *api.WriteAPI) {
 	hd, ok := histograms["krakend.service.debug.GCStats.Pause"]
 	if !ok {
-		return nil
+		return
 	}
 	tags := map[string]string{
 		"host": hostname,
 	}
 
-	histogramPoint, err := client.NewPoint("service.debug.GCStats.Pause", tags, newFields(hd), now)
-	if err != nil {
-		logger.Error("creating histogram point:", err.Error())
-		return nil
-	}
-	return histogramPoint
+	histogramPoint := influxdb2.NewPoint("service.debug.GCStats.Pause", tags, newFields(hd), now)
+	(*writeApi).WritePoint(histogramPoint)
 }
 
-func runtimePoint(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger) *client.Point {
+func runtimePoint(hostname string, now time.Time, histograms map[string]metrics.HistogramData, logger logging.Logger, writeApi *api.WriteAPI) {
 	hd, ok := histograms["krakend.service.runtime.MemStats.PauseNs"]
 	if !ok {
-		return nil
+		return
 	}
 	tags := map[string]string{
 		"host": hostname,
 	}
 
-	histogramPoint, err := client.NewPoint("service.runtime.MemStats.PauseNs", tags, newFields(hd), now)
-	if err != nil {
-		logger.Error("creating histogram point:", err.Error())
-		return nil
-	}
-	return histogramPoint
+	histogramPoint := influxdb2.NewPoint("service.runtime.MemStats.PauseNs", tags, newFields(hd), now)
+	(*writeApi).WritePoint(histogramPoint)
 }
 
 func isEmpty(histogram metrics.HistogramData) bool {
